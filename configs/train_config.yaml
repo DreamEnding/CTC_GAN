@@ -1,0 +1,29 @@
+# configs/train_config.yaml
+model:
+  image_size: 256
+  in_channels: 3
+  out_channels: 3
+  gen_features: 64
+  disc_features: 64
+  residual_blocks: 9
+  use_attention: True
+
+training:
+  batch_size: 4
+  learning_rate: 0.0002
+  beta1: 0.5
+  beta2: 0.999
+  lambda_cycle: 10.0
+  lambda_identity: 0.0
+  lambda_gp: 10.0
+  num_epochs: 100
+  save_every: 10
+  validate_every: 5
+
+paths:
+  data_dir: "./data/ctc_real"
+  output_dir: "./output/synthetic"
+  checkpoint_dir: "./checkpoints"
+  log_dir: "./logs"
+
+device: "cuda"
