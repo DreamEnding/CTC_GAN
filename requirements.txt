@@ -1,0 +1,37 @@
+# CTC_GAN 项目依赖
+# Python 3.10+ required
+
+# Deep Learning Framework
+# Note: By default, this installs CPU-only PyTorch.
+# For GPU support with CUDA, see installation instructions below.
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Image Processing
+Pillow>=9.0.0
+
+# Scientific Computing
+numpy>=1.23.0
+scipy>=1.10.0
+
+# Configuration
+PyYAML>=6.0
+
+# ============================================================
+# GPU/CUDA Support Installation Instructions
+# ============================================================
+# If you have an NVIDIA GPU, install PyTorch with CUDA support FIRST,
+# then install the other dependencies:
+#
+# For CUDA 11.8:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#   pip install pillow numpy scipy pyyaml
+#
+# For CUDA 12.1:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#   pip install pillow numpy scipy pyyaml
+#
+# For CPU-only (all dependencies):
+#   pip install -r requirements.txt
+#
+# For more information, visit: https://pytorch.org/get-started/locally/
