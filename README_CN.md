@@ -247,8 +247,8 @@ pip install -r requirements.txt
 # 1. 先安装 PyTorch GPU 版本（根据您的 CUDA 版本选择）
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
-# 2. 安装其他依赖（使用 --no-deps 避免重新安装 torch）
-pip install --no-deps -r requirements.txt pillow numpy scipy pyyaml
+# 2. 安装其他依赖（不要重新安装 torch 和 torchvision）
+pip install pillow numpy scipy pyyaml
 ```
 
 或者手动安装：
