@@ -1,0 +1,25 @@
+# CTC_GAN 项目依赖
+# Python 3.10+ required
+
+# Deep Learning Framework
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Image Processing
+Pillow>=9.0.0
+
+# Scientific Computing
+numpy>=1.23.0
+scipy>=1.10.0
+
+# Configuration
+PyYAML>=6.0
+
+# Note: For GPU support, install PyTorch with CUDA following instructions at:
+# https://pytorch.org/get-started/locally/
+# 
+# Example for CUDA 11.8:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#
+# Example for CUDA 12.1:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121

@@ -231,8 +231,28 @@ CUDA 可用: True
 
 ### 步骤 5：安装其他依赖
 
+**方法一：使用 requirements.txt（推荐）**
+
+项目提供了 `requirements.txt` 文件，可以一键安装所有依赖：
+
+```bash
+pip install -r requirements.txt
+```
+
+**方法二：手动安装**
+
 ```bash
 pip install -U pip
+pip install pillow numpy scipy pyyaml
+```
+
+**注意**：如果使用方法一，PyTorch 会自动安装 CPU 版本。如果需要 GPU 支持，请先按步骤 4 安装 PyTorch，然后再安装其他依赖：
+
+```bash
+# 1. 先安装 PyTorch（GPU 版本）
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# 2. 再安装其他依赖（跳过 torch 和 torchvision）
 pip install pillow numpy scipy pyyaml
 ```
 
