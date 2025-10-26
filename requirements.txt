@@ -2,6 +2,8 @@
 # Python 3.10+ required
 
 # Deep Learning Framework
+# Note: By default, this installs CPU-only PyTorch.
+# For GPU support with CUDA, see installation instructions below.
 torch>=2.0.0
 torchvision>=0.15.0
 
@@ -15,11 +17,20 @@ scipy>=1.10.0
 # Configuration
 PyYAML>=6.0
 
-# Note: For GPU support, install PyTorch with CUDA following instructions at:
-# https://pytorch.org/get-started/locally/
-# 
-# Example for CUDA 11.8:
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# ============================================================
+# GPU/CUDA Support Installation Instructions
+# ============================================================
+# If you have an NVIDIA GPU, install PyTorch with CUDA support BEFORE
+# installing other dependencies:
 #
-# Example for CUDA 12.1:
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# For CUDA 11.8:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#   pip install -r requirements.txt --no-deps pillow numpy scipy pyyaml
+#
+# For CUDA 12.1:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r requirements.txt --no-deps pillow numpy scipy pyyaml
+#
+# The --no-deps flag prevents re-installing torch/torchvision.
+#
+# For more information, visit: https://pytorch.org/get-started/locally/
