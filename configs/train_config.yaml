@@ -8,14 +8,16 @@ model:
   disc_features: 64
   residual_blocks: 9
   use_attention: True
+  use_noise_injection: True  # Enable noise injection for diversity
 
 training:
   batch_size: 4
   learning_rate: 0.0002
   beta1: 0.5
   beta2: 0.999
-  lambda_cycle: 10.0
+  lambda_cycle: 0.0         # Removed: no forced reconstruction
   lambda_identity: 0.0
+  lambda_perceptual: 1.0    # Added: perceptual loss for semantic similarity
   lambda_gp: 10.0
   num_epochs: 100
   save_every: 10

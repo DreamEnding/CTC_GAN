@@ -3,6 +3,57 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class NoiseEncoder(nn.Module):
+    """Encodes noise vector into style parameters for AdaIN"""
+    def __init__(self, latent_dim=512, style_dim=256):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(latent_dim, 512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, style_dim * 2)  # Output: [mean, std] for AdaIN
+        )
+        
+    def forward(self, noise):
+        """
+        Args:
+            noise: [B, latent_dim]
+        Returns:
+            style_params: [B, style_dim * 2] (concatenated mean and std)
+        """
+        return self.mlp(noise)
+
+class AdaIN(nn.Module):
+    """Adaptive Instance Normalization layer"""
+    def __init__(self, num_features):
+        super().__init__()
+        self.num_features = num_features
+        
+    def forward(self, content_features, style_params):
+        """
+        Apply AdaIN: modulate content features using style parameters
+        
+        Args:
+            content_features: [B, C, H, W]
+            style_params: [B, C*2] (mean and std concatenated)
+        Returns:
+            modulated_features: [B, C, H, W]
+        """
+        # Split style params into mean and std
+        style_mean, style_std = style_params.chunk(2, dim=1)
+        style_mean = style_mean.unsqueeze(-1).unsqueeze(-1)
+        style_std = style_std.unsqueeze(-1).unsqueeze(-1)
+        
+        # Normalize content features
+        size = content_features.size()
+        content_mean = content_features.mean(dim=[2, 3], keepdim=True)
+        content_std = content_features.std(dim=[2, 3], keepdim=True) + 1e-5
+        normalized_features = (content_features - content_mean) / content_std
+        
+        # Apply style modulation
+        return normalized_features * style_std + style_mean
+
 class SelfAttention(nn.Module):
     """ Self attention Layer """
     def __init__(self, in_dim):
@@ -40,66 +91,112 @@ class ConvBlock(nn.Module):
         return self.conv(x)
 
 class ResidualBlock(nn.Module):
-    def __init__(self, channels):
+    def __init__(self, channels, use_adain=False):
         super().__init__()
-        self.block = nn.Sequential(
-            ConvBlock(channels, channels, kernel_size=3, padding=1),
-            ConvBlock(channels, channels, use_act=False, kernel_size=3, padding=1)
-        )
+        self.use_adain = use_adain
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, padding_mode="reflect")
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, padding_mode="reflect")
+        
+        if use_adain:
+            self.adain1 = AdaIN(channels)
+            self.adain2 = AdaIN(channels)
+        else:
+            self.norm1 = nn.InstanceNorm2d(channels)
+            self.norm2 = nn.InstanceNorm2d(channels)
+        
+        self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x):
-        return x + self.block(x)
+    def forward(self, x, style_params=None):
+        residual = x
+        
+        out = self.conv1(x)
+        if self.use_adain and style_params is not None:
+            out = self.adain1(out, style_params)
+        else:
+            out = self.norm1(out)
+        out = self.relu(out)
+        
+        out = self.conv2(out)
+        if self.use_adain and style_params is not None:
+            out = self.adain2(out, style_params)
+        else:
+            out = self.norm2(out)
+        
+        return residual + out
 
 class Generator(nn.Module):
-    def __init__(self, latent_dim=512, img_channels=3, num_features=64, num_residuals=9, use_attention=True):
+    def __init__(self, latent_dim=512, img_channels=3, num_features=64, num_residuals=9, use_attention=True, use_noise_injection=True):
         super().__init__()
         self.use_attention = use_attention
         self.latent_dim = latent_dim
+        self.use_noise_injection = use_noise_injection
 
-        # Project latent vector to initial feature map (256 channels, 4x4 spatial)
-        self.initial = nn.Sequential(
-            nn.Linear(latent_dim, 256 * 4 * 4),
-            nn.ReLU(inplace=True)
+        # Image encoder: Encode input image to feature space
+        self.encoder = nn.Sequential(
+            # 64x64 -> 32x32
+            ConvBlock(img_channels, num_features, down=True, kernel_size=4, stride=2, padding=1),
+            # 32x32 -> 16x16
+            ConvBlock(num_features, num_features * 2, down=True, kernel_size=4, stride=2, padding=1),
+            # 16x16 -> 16x16 (keep resolution, increase channels)
+            ConvBlock(num_features * 2, 256, down=True, kernel_size=3, stride=1, padding=1)
         )
 
-        # Upsample from 4x4 to 8x8 (256 channels)
-        self.upsample1 = ConvBlock(256, 256, down=False, kernel_size=4, stride=2, padding=1)
-        
-        # Upsample from 8x8 to 16x16 (256 channels)
-        self.upsample2 = ConvBlock(256, 256, down=False, kernel_size=4, stride=2, padding=1)
+        # Noise encoder: Encode noise vector to style parameters
+        if use_noise_injection:
+            self.noise_encoder = NoiseEncoder(latent_dim=latent_dim, style_dim=256)
 
-        # Residual blocks at 16x16 resolution
-        self.residual_blocks = nn.Sequential(
-            *[ResidualBlock(256) for _ in range(num_residuals)]
-        )
+        # Residual blocks with optional AdaIN
+        self.residual_blocks = nn.ModuleList([
+            ResidualBlock(256, use_adain=use_noise_injection) for _ in range(num_residuals)
+        ])
 
         # Self-attention at 16x16 resolution
         if use_attention:
             self.attention = SelfAttention(256)
 
-        # Upsample from 16x16 to 32x32 (reduce channels to 128)
-        self.upsample3 = ConvBlock(256, 128, down=False, kernel_size=4, stride=2, padding=1)
-        
-        # Upsample from 32x32 to 64x64 (reduce channels to 64)
-        self.upsample4 = ConvBlock(128, 64, down=False, kernel_size=4, stride=2, padding=1)
+        # Decoder: Upsample back to original resolution
+        # 16x16 -> 32x32
+        self.upsample1 = ConvBlock(256, 128, down=False, kernel_size=4, stride=2, padding=1)
+        # 32x32 -> 64x64
+        self.upsample2 = ConvBlock(128, 64, down=False, kernel_size=4, stride=2, padding=1)
 
         # Final convolution to RGB image
-        self.last = nn.Conv2d(64, img_channels, kernel_size=3, stride=1, padding=1)
+        self.last = nn.Conv2d(64, img_channels, kernel_size=3, stride=1, padding=1, padding_mode="reflect")
 
-    def forward(self, z):
-        # z: [batch_size, latent_dim]
-        x = self.initial(z)  # [batch_size, 256*4*4]
-        x = x.view(-1, 256, 4, 4)  # [batch_size, 256, 4, 4]
+    def forward(self, x, noise=None):
+        """
+        Forward pass with hybrid image+noise input
         
-        x = self.upsample1(x)  # [batch_size, 256, 8, 8]
-        x = self.upsample2(x)  # [batch_size, 256, 16, 16]
+        Args:
+            x: Input image [B, 3, H, W]
+            noise: Optional noise vector [B, latent_dim] for style injection
+                   If None and use_noise_injection=True, random noise is sampled
+                   
+        Returns:
+            Generated image [B, 3, H, W]
+        """
+        # Encode input image to content features
+        content_features = self.encoder(x)  # [B, 256, 16, 16]
         
-        x = self.residual_blocks(x)  # [batch_size, 256, 16, 16]
+        # Encode noise to style parameters if using noise injection
+        style_params = None
+        if self.use_noise_injection:
+            if noise is None:
+                # Sample random noise if not provided
+                noise = torch.randn(x.size(0), self.latent_dim, device=x.device)
+            style_params = self.noise_encoder(noise)  # [B, 512]
         
+        # Apply residual blocks with optional style modulation
+        features = content_features
+        for res_block in self.residual_blocks:
+            features = res_block(features, style_params)
+        
+        # Apply self-attention
         if self.use_attention:
-            x = self.attention(x)  # [batch_size, 256, 16, 16]
+            features = self.attention(features)
         
-        x = self.upsample3(x)  # [batch_size, 128, 32, 32]
-        x = self.upsample4(x)  # [batch_size, 64, 64, 64]
+        # Decode to output image
+        features = self.upsample1(features)  # [B, 128, 32, 32]
+        features = self.upsample2(features)  # [B, 64, 64, 64]
         
-        return torch.tanh(self.last(x))  # [batch_size, 3, 64, 64]
+        return torch.tanh(self.last(features))  # [B, 3, 64, 64]
