@@ -43,10 +43,16 @@ class CycleGANSystem:
         self.scheduler_disc = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.opt_disc, T_max=config['training']['num_epochs']
         )
+        
+        # Training step counter
+        self.step_count = 0
 
     def train_step(self, real):
         real = real.to(self.device)
         batch_size = real.shape[0]
+        
+        # Increment step counter
+        self.step_count += 1
 
         # Sample random noise
         noise = torch.randn(batch_size, self.config['model']['latent_dim']).to(self.device)
