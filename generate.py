@@ -13,7 +13,19 @@ def load_config(config_path):
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
-def generate_synthetic_images(config_path, checkpoint_path, num_images=20, seed=None, batch_size=1):
+def generate_synthetic_images(config_path, checkpoint_path, num_images=20, seed=None, 
+                              batch_size=1, num_variants_per_image=5):
+    """
+    Generate synthetic images using real images + noise injection
+    
+    Args:
+        config_path: Path to config file
+        checkpoint_path: Path to model checkpoint
+        num_images: Number of source real images to use
+        seed: Random seed for reproducibility
+        batch_size: Batch size for generation (not used in variant mode)
+        num_variants_per_image: Number of variants to generate per source image
+    """
     config = load_config(config_path)
     device = torch.device(config['device'])
 
@@ -30,18 +42,16 @@ def generate_synthetic_images(config_path, checkpoint_path, num_images=20, seed=
         img_channels=config['model']['in_channels'],
         num_features=config['model']['gen_features'],
         num_residuals=config['model']['residual_blocks'],
-        use_attention=config['model']['use_attention']
+        use_attention=config['model']['use_attention'],
+        use_noise_injection=config['model'].get('use_noise_injection', True)
     ).to(device)
 
     gen.load_state_dict(torch.load(checkpoint_path, map_location=device)['gen_state_dict'])
     gen.eval()
 
-    # Create output directory
-    os.makedirs(config['paths']['output_dir'], exist_ok=True)
-
     # Initialize logger
     logger = Logger(config['paths']['log_dir'])
-    logger.log_info(f"开始生成合成图像: 目标数量={num_images}, 随机种子={seed}")
+    logger.log_info(f"开始生成合成图像: 源图像数={num_images}, 每张变体数={num_variants_per_image}, 随机种子={seed}")
     logger.log_config(config)
 
     # Device availability check and fallback
@@ -58,68 +68,79 @@ def generate_synthetic_images(config_path, checkpoint_path, num_images=20, seed=
         raise PermissionError(f"输出目录不可写: {output_dir}")
 
     # Pre-check disk space (rough estimate)
+    total_images = num_images * num_variants_per_image
     total, used, free = shutil.disk_usage(output_dir)
     est_per_img_kb = 300  # Empirical estimate, average PNG size ≈ 300KB
-    required = est_per_img_kb * 1024 * num_images
+    required = est_per_img_kb * 1024 * total_images
     if free < required:
         logger.log_warning(f"磁盘空间可能不足: 需要≈{required/1024/1024:.1f}MB，可用≈{free/1024/1024:.1f}MB")
 
+    # Load real images dataset
+    from datasets.ctc_dataset import CTCImageDataset, get_transforms
+    transform = get_transforms(config['model']['image_size'])
+    dataset = CTCImageDataset(config['paths']['data_dir'], transform=transform)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True)
+    
     saved = 0
     latent_dim = config['model']['latent_dim']
 
     with torch.no_grad():
-        while saved < num_images:
-            try:
-                # Sample random noise from normal distribution
-                current_batch_size = min(batch_size, num_images - saved)
-                noise = torch.randn(current_batch_size, latent_dim).to(device)
+        for img_idx, real in enumerate(dataloader):
+            if img_idx >= num_images:
+                break
                 
-                # Generate fake images from noise
-                fake = gen(noise)
-                fake = (fake * 0.5 + 0.5).clamp(0, 1)  # De-normalize to [0, 1]
+            real = real.to(device)
+            
+            # Generate multiple variants for each real image
+            for variant_idx in range(num_variants_per_image):
+                try:
+                    # Sample different noise for each variant
+                    noise = torch.randn(1, latent_dim, device=device)
+                    
+                    # Generate variant image
+                    fake = gen(real, noise)
+                    fake = (fake * 0.5 + 0.5).clamp(0, 1)  # De-normalize to [0, 1]
 
-                # Save each image in the batch
-                for i in range(current_batch_size):
-                    img = transforms.ToPILImage()(fake[i].cpu())
+                    img = transforms.ToPILImage()(fake.squeeze(0).cpu())
 
-                    # Ensure unique filenames to avoid overwriting existing files
-                    save_path = os.path.join(output_dir, f"synthetic_ctc_{saved+1:05d}.png")
+                    # Save with informative filename
+                    save_path = os.path.join(output_dir, f"generated_{saved:05d}_src{img_idx:03d}_var{variant_idx:03d}.png")
                     
                     img.save(save_path)
                     print(f"✅ Saved {save_path}")
-                    logger.log_info(f"已保存 {save_path} ({saved+1}/{num_images})")
+                    logger.log_info(f"已保存 {save_path} ({saved+1}/{total_images})")
                     saved += 1
 
-                # Periodic resource cleanup and status logging
-                if device.type == 'cuda' and saved % 50 == 0:
-                    torch.cuda.empty_cache()
-                if saved % 50 == 0:
-                    gc.collect()
-                    free_now = shutil.disk_usage(output_dir).free
-                    logger.log_info(f"进度 {saved}/{num_images}，剩余磁盘≈{free_now/1024/1024:.1f}MB")
-                    
-            except Exception as e:
-                # Log error but continue
-                logger.log_error(f"生成失败: {e}")
-                print(f"❌ Error generating image: {e}")
-                break
-            finally:
-                # Assist garbage collection
-                try:
-                    del noise, fake, img
-                except Exception:
-                    pass
+                    # Periodic resource cleanup
+                    if device.type == 'cuda' and saved % 50 == 0:
+                        torch.cuda.empty_cache()
+                    if saved % 50 == 0:
+                        gc.collect()
+                        free_now = shutil.disk_usage(output_dir).free
+                        logger.log_info(f"进度 {saved}/{total_images}，剩余磁盘≈{free_now/1024/1024:.1f}MB")
+                        
+                except Exception as e:
+                    logger.log_error(f"生成失败: {e}")
+                    print(f"❌ Error generating image: {e}")
+                    continue
+                finally:
+                    try:
+                        del noise, fake, img
+                    except Exception:
+                        pass
 
-    logger.log_info(f"生成完成，总计 {saved}/{num_images} 张。")
-    print(f"🎉 Generation complete! Saved {saved} images to {output_dir}")
+    logger.log_info(f"生成完成，总计 {saved}/{total_images} 张图像，来自 {img_idx+1} 张源图像。")
+    print(f"🎉 Generation complete! Generated {saved} images from {img_idx+1} source images")
+    print(f"   Average {saved/(img_idx+1):.1f} variants per source image")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate synthetic images from trained WGAN-GP model")
+    parser = argparse.ArgumentParser(description="Generate synthetic images using real images + noise injection")
     parser.add_argument("--config", type=str, default="configs/train_config.yaml", help="Path to config file")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
-    parser.add_argument("--num_images", type=int, default=100, help="Number of images to generate")
+    parser.add_argument("--num_images", type=int, default=10, help="Number of source real images to use")
+    parser.add_argument("--num_variants_per_image", type=int, default=10, help="Number of variants to generate per source image")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for generation")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size (deprecated, kept for compatibility)")
     
     args = parser.parse_args()
     
@@ -128,5 +149,6 @@ if __name__ == "__main__":
         checkpoint_path=args.checkpoint,
         num_images=args.num_images,
         seed=args.seed,
-        batch_size=args.batch_size
+        batch_size=args.batch_size,
+        num_variants_per_image=args.num_variants_per_image
     )

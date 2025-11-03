@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from .generator import Generator
 from .discriminator import Discriminator, gradient_penalty
+from .losses import PerceptualLoss
 
 class CycleGANSystem:
     def __init__(self, config, device):
@@ -15,7 +16,8 @@ class CycleGANSystem:
             img_channels=config['model']['in_channels'],
             num_features=config['model']['gen_features'],
             num_residuals=config['model']['residual_blocks'],
-            use_attention=config['model']['use_attention']
+            use_attention=config['model']['use_attention'],
+            use_noise_injection=config['model'].get('use_noise_injection', True)
         ).to(device)
 
         self.disc = Discriminator(
@@ -44,6 +46,9 @@ class CycleGANSystem:
             self.opt_disc, T_max=config['training']['num_epochs']
         )
         
+        # Perceptual loss for semantic similarity
+        self.perceptual_loss = PerceptualLoss().to(device)
+        
         # Training step counter
         self.step_count = 0
 
@@ -54,11 +59,12 @@ class CycleGANSystem:
         # Increment step counter
         self.step_count += 1
 
-        # Sample random noise
+        # Sample random noise for style injection
         noise = torch.randn(batch_size, self.config['model']['latent_dim']).to(self.device)
 
         # --- Train Discriminator ---
-        fake = self.gen(noise)
+        # Generate fake images by passing real images + noise
+        fake = self.gen(real, noise)
         disc_real = self.disc(real)
         disc_fake = self.disc(fake.detach())
 
@@ -73,12 +79,23 @@ class CycleGANSystem:
         self.opt_disc.step()
 
         # --- Train Generator ---
+        loss_perceptual_val = 0.0
         if self._should_train_gen():
-            # Resample noise for generator training
-            noise = torch.randn(batch_size, self.config['model']['latent_dim']).to(self.device)
-            fake = self.gen(noise)
+            # Resample noise for generator training (increases diversity)
+            noise2 = torch.randn(batch_size, self.config['model']['latent_dim']).to(self.device)
+            fake = self.gen(real, noise2)
             disc_fake = self.disc(fake)
-            loss_gen = -torch.mean(disc_fake)
+            
+            # Adversarial loss
+            loss_gen_adversarial = -torch.mean(disc_fake)
+            
+            # Perceptual loss (lightweight semantic similarity)
+            lambda_perceptual = self.config['training'].get('lambda_perceptual', 1.0)
+            loss_perceptual = self.perceptual_loss(fake, real) * lambda_perceptual
+            loss_perceptual_val = loss_perceptual.item()
+            
+            # Total generator loss
+            loss_gen = loss_gen_adversarial + loss_perceptual
 
             self.opt_gen.zero_grad()
             loss_gen.backward()
@@ -89,6 +106,7 @@ class CycleGANSystem:
         return {
             'loss_disc': loss_disc.item(),
             'loss_gen': loss_gen.item(),
+            'loss_perceptual': loss_perceptual_val,
             'gp': gp.item()
         }
 

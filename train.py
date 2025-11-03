@@ -31,6 +31,7 @@ def main():
     for epoch in range(start_epoch, config['training']['num_epochs'] + 1):
         epoch_disc_loss = 0.0
         epoch_gen_loss = 0.0
+        epoch_perceptual_loss = 0.0
         num_batches = 0
 
         for batch_idx, real in enumerate(dataloader):
@@ -38,19 +39,24 @@ def main():
 
             epoch_disc_loss += losses['loss_disc']
             epoch_gen_loss += losses['loss_gen']
+            epoch_perceptual_loss += losses.get('loss_perceptual', 0.0)
             num_batches += 1
 
             if batch_idx % 10 == 0:
                 print(f"Epoch [{epoch}/{config['training']['num_epochs']}] "
-                      f"Batch {batch_idx}: D={losses['loss_disc']:.4f}, G={losses['loss_gen']:.4f}, GP={losses['gp']:.4f}")
+                      f"Batch {batch_idx}: D={losses['loss_disc']:.4f}, G={losses['loss_gen']:.4f}, "
+                      f"Perceptual={losses.get('loss_perceptual', 0.0):.4f}, GP={losses['gp']:.4f}")
 
         avg_disc_loss = epoch_disc_loss / num_batches
         avg_gen_loss = epoch_gen_loss / num_batches
+        avg_perceptual_loss = epoch_perceptual_loss / num_batches
 
         logger.log_scalar('Loss/Discriminator', avg_disc_loss, epoch)
         logger.log_scalar('Loss/Generator', avg_gen_loss, epoch)
+        logger.log_scalar('Loss/Perceptual', avg_perceptual_loss, epoch)
 
-        print(f"✅ Epoch {epoch} | Avg D Loss: {avg_disc_loss:.4f} | Avg G Loss: {avg_gen_loss:.4f}")
+        print(f"✅ Epoch {epoch} | Avg D Loss: {avg_disc_loss:.4f} | Avg G Loss: {avg_gen_loss:.4f} | "
+              f"Avg Perceptual Loss: {avg_perceptual_loss:.4f}")
 
         # Save model
         if epoch % config['training']['save_every'] == 0:
