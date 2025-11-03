@@ -9,7 +9,13 @@ class PerceptualLoss(nn.Module):
     def __init__(self):
         super().__init__()
         # Use VGG19 features up to relu3_4 (16th layer)
-        vgg = vgg19(pretrained=True).features[:16]
+        # Use weights parameter instead of deprecated pretrained
+        try:
+            from torchvision.models import VGG19_Weights
+            vgg = vgg19(weights=VGG19_Weights.IMAGENET1K_V1).features[:16]
+        except ImportError:
+            # Fallback for older torchvision versions
+            vgg = vgg19(pretrained=True).features[:16]
         self.vgg = vgg.eval()
         # Freeze VGG parameters
         for param in self.vgg.parameters():

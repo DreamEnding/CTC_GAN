@@ -40,6 +40,12 @@ class AdaIN(nn.Module):
         Returns:
             modulated_features: [B, C, H, W]
         """
+        # Validate input dimensions
+        batch_size, num_channels = content_features.size(0), content_features.size(1)
+        expected_style_dim = num_channels * 2
+        if style_params.size(1) != expected_style_dim:
+            raise ValueError(f"Expected style_params dimension {expected_style_dim}, got {style_params.size(1)}")
+        
         # Split style params into mean and std
         style_mean, style_std = style_params.chunk(2, dim=1)
         style_mean = style_mean.unsqueeze(-1).unsqueeze(-1)
