@@ -51,44 +51,55 @@ class ResidualBlock(nn.Module):
         return x + self.block(x)
 
 class Generator(nn.Module):
-    def __init__(self, img_channels=3, num_features=64, num_residuals=9, use_attention=True):
+    def __init__(self, latent_dim=512, img_channels=3, num_features=64, num_residuals=9, use_attention=True):
         super().__init__()
         self.use_attention = use_attention
+        self.latent_dim = latent_dim
 
+        # Project latent vector to initial feature map (256 channels, 4x4 spatial)
         self.initial = nn.Sequential(
-            nn.Conv2d(img_channels, num_features, kernel_size=7, stride=1, padding=3, padding_mode="reflect"),
-            nn.InstanceNorm2d(num_features),
-            nn.ReLU(inplace=True),
+            nn.Linear(latent_dim, 256 * 4 * 4),
+            nn.ReLU(inplace=True)
         )
 
-        self.down_blocks = nn.ModuleList([
-            ConvBlock(num_features, num_features*2, kernel_size=3, stride=2, padding=1),
-            ConvBlock(num_features*2, num_features*4, kernel_size=3, stride=2, padding=1),
-        ])
+        # Upsample from 4x4 to 8x8 (256 channels)
+        self.upsample1 = ConvBlock(256, 256, down=False, kernel_size=4, stride=2, padding=1)
+        
+        # Upsample from 8x8 to 16x16 (256 channels)
+        self.upsample2 = ConvBlock(256, 256, down=False, kernel_size=4, stride=2, padding=1)
 
+        # Residual blocks at 16x16 resolution
         self.residual_blocks = nn.Sequential(
-            *[ResidualBlock(num_features*4) for _ in range(num_residuals)]
+            *[ResidualBlock(256) for _ in range(num_residuals)]
         )
 
+        # Self-attention at 16x16 resolution
         if use_attention:
-            self.attention = SelfAttention(num_features*4)
+            self.attention = SelfAttention(256)
 
-        self.up_blocks = nn.ModuleList([
-            ConvBlock(num_features*4, num_features*2, down=False, kernel_size=3, stride=2, padding=1, output_padding=1),
-            ConvBlock(num_features*2, num_features, down=False, kernel_size=3, stride=2, padding=1, output_padding=1),
-        ])
+        # Upsample from 16x16 to 32x32 (reduce channels to 128)
+        self.upsample3 = ConvBlock(256, 128, down=False, kernel_size=4, stride=2, padding=1)
+        
+        # Upsample from 32x32 to 64x64 (reduce channels to 64)
+        self.upsample4 = ConvBlock(128, 64, down=False, kernel_size=4, stride=2, padding=1)
 
-        self.last = nn.Conv2d(
-            num_features, img_channels, kernel_size=7, stride=1, padding=3, padding_mode="reflect"
-        )
+        # Final convolution to RGB image
+        self.last = nn.Conv2d(64, img_channels, kernel_size=3, stride=1, padding=1)
 
-    def forward(self, x):
-        x = self.initial(x)
-        for layer in self.down_blocks:
-            x = layer(x)
-        x = self.residual_blocks(x)
+    def forward(self, z):
+        # z: [batch_size, latent_dim]
+        x = self.initial(z)  # [batch_size, 256*4*4]
+        x = x.view(-1, 256, 4, 4)  # [batch_size, 256, 4, 4]
+        
+        x = self.upsample1(x)  # [batch_size, 256, 8, 8]
+        x = self.upsample2(x)  # [batch_size, 256, 16, 16]
+        
+        x = self.residual_blocks(x)  # [batch_size, 256, 16, 16]
+        
         if self.use_attention:
-            x = self.attention(x)
-        for layer in self.up_blocks:
-            x = layer(x)
-        return torch.tanh(self.last(x))
+            x = self.attention(x)  # [batch_size, 256, 16, 16]
+        
+        x = self.upsample3(x)  # [batch_size, 128, 32, 32]
+        x = self.upsample4(x)  # [batch_size, 64, 64, 64]
+        
+        return torch.tanh(self.last(x))  # [batch_size, 3, 64, 64]

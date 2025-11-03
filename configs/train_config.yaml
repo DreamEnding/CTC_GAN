@@ -1,8 +1,9 @@
 # configs/train_config.yaml
 model:
-  image_size: 256
+  image_size: 64
   in_channels: 3
   out_channels: 3
+  latent_dim: 512
   gen_features: 64
   disc_features: 64
   residual_blocks: 9

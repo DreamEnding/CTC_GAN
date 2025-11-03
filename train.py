@@ -27,7 +27,6 @@ def main():
         print(f".Resume training from epoch {start_epoch}")
 
     print("🚀 Starting Training...")
-    gan_system.step_count = 0
 
     for epoch in range(start_epoch, config['training']['num_epochs'] + 1):
         epoch_disc_loss = 0.0
@@ -35,7 +34,6 @@ def main():
         num_batches = 0
 
         for batch_idx, real in enumerate(dataloader):
-            gan_system.step_count += 1
             losses = gan_system.train_step(real)
 
             epoch_disc_loss += losses['loss_disc']

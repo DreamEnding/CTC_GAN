@@ -11,6 +11,7 @@ class CycleGANSystem:
 
         # Initialize generator and discriminator
         self.gen = Generator(
+            latent_dim=config['model']['latent_dim'],
             img_channels=config['model']['in_channels'],
             num_features=config['model']['gen_features'],
             num_residuals=config['model']['residual_blocks'],
@@ -35,10 +36,6 @@ class CycleGANSystem:
             betas=(config['training']['beta1'], config['training']['beta2'])
         )
 
-        # Loss functions
-        self.bce = nn.BCEWithLogitsLoss()
-        self.l1 = nn.L1Loss()
-
         # Learning rate schedulers
         self.scheduler_gen = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.opt_gen, T_max=config['training']['num_epochs']
@@ -46,13 +43,22 @@ class CycleGANSystem:
         self.scheduler_disc = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.opt_disc, T_max=config['training']['num_epochs']
         )
+        
+        # Training step counter
+        self.step_count = 0
 
     def train_step(self, real):
         real = real.to(self.device)
         batch_size = real.shape[0]
+        
+        # Increment step counter
+        self.step_count += 1
+
+        # Sample random noise
+        noise = torch.randn(batch_size, self.config['model']['latent_dim']).to(self.device)
 
         # --- Train Discriminator ---
-        fake = self.gen(real)
+        fake = self.gen(noise)
         disc_real = self.disc(real)
         disc_fake = self.disc(fake.detach())
 
@@ -68,10 +74,11 @@ class CycleGANSystem:
 
         # --- Train Generator ---
         if self._should_train_gen():
+            # Resample noise for generator training
+            noise = torch.randn(batch_size, self.config['model']['latent_dim']).to(self.device)
+            fake = self.gen(noise)
             disc_fake = self.disc(fake)
-            loss_gen_gan = -torch.mean(disc_fake)
-            loss_gen_l1 = self.l1(fake, real) * self.config['training']['lambda_cycle']
-            loss_gen = loss_gen_gan + loss_gen_l1
+            loss_gen = -torch.mean(disc_fake)
 
             self.opt_gen.zero_grad()
             loss_gen.backward()
